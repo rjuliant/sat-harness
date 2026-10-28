@@ -1,2 +1,3 @@
-# sat-harness
-SAT solving harness (multi-shard local search)
+# SAT harness
+
+Multi-shard stochastic local search (yalsat) used as extra CPU for our own SAT instances.
