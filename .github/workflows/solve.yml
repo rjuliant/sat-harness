@@ -1,0 +1,60 @@
+name: solve
+on:
+  workflow_dispatch:
+    inputs:
+      label: {description: run label, required: true}
+      budget: {description: seconds of solving, required: false, default: "450"}
+      shards: {description: number of shards (1-20), required: false, default: "12"}
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+    steps:
+      - uses: actions/checkout@v4
+      - name: build yalsat
+        run: |
+          curl -sL -o y.tar.gz https://github.com/arminbiere/yalsat/archive/refs/heads/master.tar.gz
+          tar xzf y.tar.gz
+          cd yalsat-master
+          ./configure.sh > /dev/null 2>&1
+          make -j4 > /dev/null 2>&1
+          cp yalsat "$GITHUB_WORKSPACE/yalsat"
+          echo built
+      - name: shard ${{ matrix.shard }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          BUDGET: ${{ inputs.budget }}
+          LABEL: ${{ inputs.label }}
+          MAXSHARD: ${{ inputs.shards }}
+        run: |
+          set +e
+          if [ "$SHARD" -ge "$MAXSHARD" ]; then echo "SKIP_SHARD"; exit 0; fi
+          CNF=input/instance.cnf
+          STRATS=("" "--bfs" "--dfs" "--rfs" "--pfs" "--ufs" "--probsat")
+          STRAT=${STRATS[$((SHARD % 7))]}
+          for i in 0 1 2 3; do
+            SEED=$(( SHARD * 100003 + i * 7919 + 11 ))
+            ./yalsat $STRAT "$CNF" "$SEED" > "out_$i.txt" 2>&1 &
+          done
+          END=$(( $(date +%s) + BUDGET ))
+          while [ "$(date +%s)" -lt "$END" ]; do
+            if grep -lq "^s SATISFIABLE" out_*.txt 2>/dev/null; then break; fi
+            sleep 5
+          done
+          pkill -f "./yalsat" 2>/dev/null
+          sleep 1
+          for f in out_*.txt; do
+            if grep -q "^s SATISFIABLE" "$f" 2>/dev/null; then
+              echo "SOLVED $LABEL shard=$SHARD strat='$STRAT' file=$f"
+              grep "^v " "$f" | tr -d '\n' | sed 's/^v //'
+              echo
+              exit 0
+            fi
+          done
+          echo "NO_SOLUTION shard=$SHARD best:"
+          tail -2 out_0.txt 2>/dev/null
